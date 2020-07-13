@@ -1,0 +1,100 @@
+@startuml ipc
+
+scale 2
+
+
+interface ITaskEventQueue {
+    +forward_to_event_listener() void
+    +size() int
+    +register_notification(QueueNotification* notification) void
+}
+
+class TaskEventQueue<T> {
+    #Queue<T> queue
+    #QueueNotification* notif = nullptr
+    -Task& task
+    -IEventListener<T>$ listener
+    {static} +create(int size, Task& owner_task, IEventListener~T~& event_listener)
+    +~TaskEventQueue()
+    +push(const T& item): bool
+    +size(): int
+    +count(): int
+    +register_notification(QueueNotification* notification): void
+    +clear(): void
+    #TaskEventQueue(int size, Task& task, IEventListener<T>& listener)
+    #push_internal(const T& item, const std::weak_ptr<ITaskEventQueue>& receiver): bool
+    #shared_from_base(): std::shared_ptr<Derived>
+    -forward_to_event_listener(): void
+}
+note left
+Cada vez que <b>TaskEventQueue</b> recibe un evento 
+se inserta una referencia de la propia <b>TaskEventQueue</b>
+en la lista de <b>QueueNotification</b> que forma parte 
+de la tarea a la que se asigno la <b>TaskEventQueue</b>.
+end note
+
+class Queue<T> {
+    -const int queue_size;
+    -std::vector<T> items;
+    -std::mutex guard;
+    +explicit Queue(int size)
+    +virtual ~Queue()
+    +size(): int
+    +push(const T& item): bool
+    +pop(T& target): bool
+}
+
+class QueueNotification {
+    -std::deque<std::weak_ptr<ITaskEventQueue>> queues{}
+    -std::mutex guard{}
+    -std::condition_variable cond{}
+    +notify(const std::weak_ptr<ITaskEventQueue>& queue): void
+    +remove_expired_queues(): void
+    +wait_for_notification(std::chrono::milliseconds timeout): std::weak_ptr<ITaskEventQueue>
+    +clear(): void
+    +empty(): bool
+    +count(): int
+}
+
+interface IEventListener<T> {
+    +size(): int
+}
+
+class Task {
+    +~Task()
+    +start(): void
+    +register_queue_with_task(ITaskEventQueue* task_queue): void
+    +register_polled_queue_with_task(IPolledTaskQueue* polled_queue): void
+    +unregister_polled_queue_with_task(IPolledTaskQueue* polled_queue): void
+    #name std::string
+    #Task(uint32_t priority, std::chrono::milliseconds tick_interval)
+    #Task(std::string task_name, uint32_t stack_size, uint32_t priority, std::chrono::milliseconds tick_interval, int core)
+    #virtual tick(): void
+    #virtual init(): void
+    #report_stack_status(): void
+    -worker std::thread
+    -stack_size uint32_t
+    -priority uint32_t
+    -bool is_attached
+    -int affinity;
+    -std::chrono::milliseconds tick_interval
+    -std::atomic_bool started{ false }
+    -std::mutex start_mutex{}
+    -std::condition_variable start_condition{}
+    -smooth::core::timer::ElapsedTime status_report_timer{}
+    -QueueNotification notification{}
+    -std::mutex queue_mutex{}
+    -std::vector<IPolledTaskQueue*> polled_queues{}
+    -exec(): void
+}
+
+Task "1" *-- "1" QueueNotification
+
+class TaskEventQueue implements ITaskEventQueue
+TaskEventQueue "1" *-- "1" Queue
+TaskEventQueue --> QueueNotification
+TaskEventQueue --> IEventListener
+
+QueueNotification "1" *-- "N" TaskEventQueue
+
+@enduml
